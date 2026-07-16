@@ -1,0 +1,3 @@
+Hey 👋
+
+- Fixed issue with non-standard `ìtunes:duration` values (#40).
