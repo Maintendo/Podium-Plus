@@ -122,6 +122,7 @@ import app.podiumpodcasts.podium.ui.dialog.ShimmerAsyncImage
 import app.podiumpodcasts.podium.ui.dialog.bottomsheet.PodcastSettingsBottomSheet
 import app.podiumpodcasts.podium.ui.formatFileSize
 import app.podiumpodcasts.podium.ui.helper.LocalDatabase
+import app.podiumpodcasts.podium.ui.helper.LocalSettingsRepository
 import app.podiumpodcasts.podium.ui.theme.Typography
 import app.podiumpodcasts.podium.ui.vm.PodcastDetailViewModel
 import coil3.compose.AsyncImagePainter
@@ -149,10 +150,11 @@ fun PodcastDetailView(
     val scope = rememberCoroutineScope()
 
     val db = LocalDatabase.current
+    val settingsRepository = LocalSettingsRepository.current
     val activity = LocalActivity.current as AppActivity
 
     val vm = viewModel(key = podcast.origin) {
-        PodcastDetailViewModel(db, podcast)
+        PodcastDetailViewModel(db, podcast, settingsRepository)
     }
 
     val subscription = vm.subscription.collectAsState(null)

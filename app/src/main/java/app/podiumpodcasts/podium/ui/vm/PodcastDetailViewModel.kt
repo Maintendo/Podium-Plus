@@ -16,6 +16,9 @@ import androidx.paging.Pager
 import androidx.paging.PagingConfig
 import androidx.paging.cachedIn
 import app.podiumpodcasts.podium.api.db.AppDatabase
+import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.stringPreferencesKey
+import app.podiumpodcasts.podium.SettingsRepository
 import app.podiumpodcasts.podium.api.db.dao.PodcastEpisodesFilter
 import app.podiumpodcasts.podium.api.db.dao.PodcastEpisodesOrder
 import app.podiumpodcasts.podium.api.db.dao.PodcastEpisodesOrderBy
@@ -32,8 +35,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 
 private data class QueryBundle(
     val search: String,
@@ -45,7 +50,8 @@ private data class QueryBundle(
 
 class PodcastDetailViewModel(
     val db: AppDatabase,
-    val podcast: PodcastModel
+    val podcast: PodcastModel,
+    val settingsRepository: SettingsRepository
 ) : ViewModel() {
 
     val subscriptionManager = SubscriptionManager(
@@ -53,6 +59,79 @@ class PodcastDetailViewModel(
     )
 
     val searchFilterOrderBarState = PodcastSearchFilterOrderBarState()
+
+    init {
+        val sanitizedOrigin = podcast.origin.replace(Regex("[^a-zA-Z0-9]"), "_")
+        val orderByPrefKey = stringPreferencesKey("podcast_orderby_$sanitizedOrigin")
+        val orderPrefKey = stringPreferencesKey("podcast_order_$sanitizedOrigin")
+        val filterPrefKey = stringPreferencesKey("podcast_filter_$sanitizedOrigin")
+        val negativeFilterPrefKey = stringPreferencesKey("podcast_neg_filter_$sanitizedOrigin")
+
+        runBlocking {
+            try {
+                val preferences = settingsRepository.dataStore.data.first()
+                val savedOrderBy = preferences[orderByPrefKey]
+                val savedOrder = preferences[orderPrefKey]
+                val savedFilter = preferences[filterPrefKey]
+                val savedNegativeFilter = preferences[negativeFilterPrefKey]
+
+                savedOrderBy?.let {
+                    try {
+                        searchFilterOrderBarState.orderBy.value = PodcastEpisodesOrderBy.valueOf(it)
+                    } catch (e: Exception) {}
+                }
+                savedOrder?.let {
+                    try {
+                        searchFilterOrderBarState.order.value = PodcastEpisodesOrder.valueOf(it)
+                    } catch (e: Exception) {}
+                }
+                savedFilter?.let {
+                    searchFilterOrderBarState.filter.clear()
+                    searchFilterOrderBarState.filter.addAll(deserializeFilters(it))
+                }
+                savedNegativeFilter?.let {
+                    searchFilterOrderBarState.negativeFilter.clear()
+                    searchFilterOrderBarState.negativeFilter.addAll(deserializeFilters(it))
+                }
+            } catch (e: Exception) {
+                // Fallback to defaults
+            }
+        }
+
+        viewModelScope.launch {
+            snapshotFlow {
+                Triple(
+                    searchFilterOrderBarState.orderBy.value,
+                    searchFilterOrderBarState.order.value,
+                    searchFilterOrderBarState.filter.toSet() to searchFilterOrderBarState.negativeFilter.toSet()
+                )
+            }
+                .distinctUntilChanged()
+                .collect { (orderBy, order, filters) ->
+                    settingsRepository.dataStore.edit { preferences ->
+                        preferences[orderByPrefKey] = orderBy.name
+                        preferences[orderPrefKey] = order.name
+                        preferences[filterPrefKey] = serializeFilters(filters.first)
+                        preferences[negativeFilterPrefKey] = serializeFilters(filters.second)
+                    }
+                }
+        }
+    }
+
+    private fun serializeFilters(filters: Set<PodcastEpisodesFilter>): String {
+        return filters.joinToString(",") { it.name }
+    }
+
+    private fun deserializeFilters(serialized: String): Set<PodcastEpisodesFilter> {
+        if (serialized.isEmpty()) return emptySet()
+        return serialized.split(",").mapNotNull { name ->
+            try {
+                PodcastEpisodesFilter.valueOf(name)
+            } catch (e: IllegalArgumentException) {
+                null
+            }
+        }.toSet()
+    }
 
     @OptIn(FlowPreview::class, ExperimentalCoroutinesApi::class)
     val episodePager =
